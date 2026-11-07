@@ -1,0 +1,60 @@
+name: Build IPA
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Seleziona Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Genera progetto Xcode
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Compila (senza firma)
+        run: |
+          set -o pipefail
+          xcodebuild \
+            -project Nebula.xcodeproj \
+            -target Nebula \
+            -configuration Release \
+            -sdk iphoneos \
+            SYMROOT="$PWD/build" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY="" \
+            build | tee build.log | grep -E "error:|warning: unused|BUILD" || true
+          test -d build/Release-iphoneos/Nebula.app || (grep -E "error" build.log | head -50; exit 1)
+
+      - name: Crea IPA
+        run: |
+          mkdir -p Payload
+          cp -R build/Release-iphoneos/Nebula.app Payload/
+          zip -qr Nebula.ipa Payload
+
+      - name: Carica artefatto
+        uses: actions/upload-artifact@v4
+        with:
+          name: Nebula-build${{ github.run_number }}
+          path: Nebula.ipa
+
+      - name: Pubblica release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v0.1.0-build${{ github.run_number }}
+          name: Nebula 0.1.0 (build ${{ github.run_number }})
+          files: Nebula.ipa
